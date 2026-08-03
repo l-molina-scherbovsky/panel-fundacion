@@ -61,25 +61,44 @@ function parseDate(str) {
   return isNaN(d) ? null : d;
 }
 
-const VISIT_COLS = [
-  {idx:2,name:"V1"},{idx:7,name:"V2"},{idx:8,name:"V3"},
-  {idx:9,name:"CT1"},{idx:10,name:"CT2"},{idx:12,name:"V4"},
-  {idx:13,name:"CT3"},{idx:14,name:"CT4"},{idx:15,name:"V5"},
-  {idx:16,name:"CT5"},{idx:17,name:"CT6"},{idx:18,name:"V6"},
-  {idx:19,name:"CT7"},{idx:20,name:"CT8"},{idx:21,name:"V7"},
-  {idx:22,name:"CT9"},{idx:23,name:"CT10"},{idx:24,name:"V8"},
-  {idx:25,name:"CT11"},{idx:26,name:"CT12"},
-];
+// Ubica las columnas por su NOMBRE en el header (primera fila), no por posición
+// fija. Así el tracker puede sumar, quitar o mover columnas (V9, CT13, CT14…)
+// sin que se rompa la lectura.
+function normHeader(s) {
+  return (s||"").trim().toUpperCase()
+    .normalize("NFD").replace(/\p{Mn}/gu,""); // saca acentos: MÉDICO → MEDICO
+}
+function buildSchema(header) {
+  const find = name => header.findIndex(h => normHeader(h) === name);
+  const visitCols = [];
+  header.forEach((h, i) => {
+    const m = normHeader(h).match(/^(V\d+|CT\d+)/); // V1, V2…  y  CT1, CT2…  (no "VISITAS")
+    if (m) visitCols.push({ idx:i, name:m[1] });
+  });
+  return {
+    paciente: find("PACIENTE"),
+    marker:   find("VISITAS"),
+    medico:   find("MEDICO"),
+    estado:   find("ESTADO"),
+    visitCols,
+  };
+}
 
 function extractVisits(rows) {
+  if (!rows.length) return [];
+  const s = buildSchema(rows[0]);
+  const cell = (row, i, fallback) => (i >= 0 ? row[i] : row[fallback]) || "";
   const out = [];
-  for (const row of rows) {
-    if (!row[1]?.includes("VISITAS")) continue;
-    const estado = row[28] || row[27] || "";
-    if (estado !== "Activo") continue;
-    const paciente = row[0]||"", medico = row[11]||"";
-    const idRaw = (row[1]||"").split(" - ")[0].trim();
-    for (const col of VISIT_COLS) {
+  for (let r = 1; r < rows.length; r++) { // arranca en 1: la fila 0 es el header
+    const row = rows[r];
+    const marker = cell(row, s.marker, 1);
+    if (!marker.includes("VISITAS")) continue;
+    const estado = cell(row, s.estado, 28);
+    if (estado.trim().toLowerCase() !== "activo") continue;
+    const paciente = cell(row, s.paciente, 0);
+    const medico   = cell(row, s.medico, 11);
+    const idRaw = marker.split(" - ")[0].trim();
+    for (const col of s.visitCols) {
       const date = parseDate(row[col.idx]);
       if (date) out.push({ paciente, medico, visitType:col.name, id:idRaw, date });
     }
